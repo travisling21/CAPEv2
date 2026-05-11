@@ -86,6 +86,16 @@ deduplicate = true
 [maec5]
 enabled = no
 
+# STIX 2.1 bundle written to report.stix.json in the task's reports
+# directory.  Suitable for ingestion into OpenCTI, MISP, ThreatConnect,
+# and other STIX-aware threat-intel platforms.
+[stix]
+enabled = no
+# Name placed on the Identity SDO that owns the Report.  Override per
+# deployment so downstream platforms can distinguish multiple CAPE
+# instances.
+identity_name = CAPE Sandbox
+
 [mongodb]
 enabled = no
 host = 127.0.0.1
