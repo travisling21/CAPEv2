@@ -100,9 +100,10 @@ ANON_VIEW = web_cfg.general.anon_viewable
 ALLOW_DL_REPORTS_TO_ALL = web_cfg.general.reports_dl_allowed_to_all
 NETWORK_PROC_MAP = pro_cfg.network.process_map
 
-# If false run next command
-# python3 manage.py runserver_plus 0.0.0.0:8000 --traceback --keep-meta-shutdown
-DEBUG = True
+# Production-safe defaults; override in conf/web.conf [security] for
+# dev work.  Run with `python3 manage.py runserver_plus
+# 0.0.0.0:8000 --traceback --keep-meta-shutdown` when iterating.
+DEBUG = web_cfg.security.get("debug", False)
 
 # Database settings. We don't need it.
 DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": "siteauth.sqlite"}}
@@ -405,7 +406,22 @@ SILENCED_SYSTEM_CHECKS = [
     #'captcha.recaptcha_test_key_error'
 ]
 
-ALLOWED_HOSTS = ["*"]
+_allowed_hosts_setting = web_cfg.security.get("allowed_hosts", "localhost,127.0.0.1")
+ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts_setting.split(",") if h.strip()]
+if not ALLOWED_HOSTS:
+    # Empty allowlist would block all requests once DEBUG is off; refuse
+    # to start instead of failing opaquely at first request time.
+    raise Exception(
+        "web.conf [security] allowed_hosts is empty.  Set at least one "
+        "host (e.g. allowed_hosts = cape.example.com)."
+    )
+if ALLOWED_HOSTS == ["*"] and not DEBUG:
+    # The old default of ["*"] disabled host validation entirely.  Loud-
+    # fail when an operator carries it forward into a production config.
+    raise Exception(
+        "web.conf [security] allowed_hosts = '*' is unsafe with DEBUG "
+        "off.  List the real public hostnames."
+    )
 
 # Max size
 MAX_UPLOAD_SIZE = web_cfg.general.max_sample_size

@@ -238,6 +238,16 @@ msix = win10,win11
 check_path_safe = yes
 # Can be multiple domains. Ex: domain.com,domain.net,domain.org
 csrf_trusted_origins =
+# Django DEBUG mode -- LEAVE OFF in production.  When on, Django emits
+# full tracebacks (with settings, env, request bodies) on any unhandled
+# error.  Defaults to off.
+debug = no
+# Comma-separated Host: header allowlist.  Django refuses requests
+# whose Host header doesn't match.  Set to your public hostname(s),
+# e.g. "cape.example.com,sandbox.example.com".  Default ["localhost",
+# "127.0.0.1"] keeps a local dev box working but rejects everything
+# else; production deployments MUST override.
+allowed_hosts = localhost,127.0.0.1
 
 [package_exclusion]
 # Remove packages from submission page. Useful when the package application is not available
