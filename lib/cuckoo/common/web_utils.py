@@ -23,6 +23,7 @@ from lib.cuckoo.common.config import Config
 from lib.cuckoo.common.integrations.parse_pe import HAVE_PEFILE, IsPEImage, pefile
 from lib.cuckoo.common.objects import File
 from lib.cuckoo.common.path_utils import path_exists, path_mkdir, path_write_file
+from lib.cuckoo.common.safe_url import SafeURLError, safe_get
 from lib.cuckoo.common.utils import (
     generate_fake_name,
     get_ip_address,
@@ -841,7 +842,18 @@ def download_file(**kwargs):
 
     if not kwargs.get("content", False) and kwargs.get("url", False):
         try:
-            r = requests.get(kwargs["url"], params=kwargs.get("params", {}), headers=kwargs.get("headers", {}), verify=False)
+            # safe_get validates the URL resolves to a public IP before
+            # connecting, rejects non-http(s) schemes, and re-validates
+            # on every redirect hop.  TLS verification re-enabled here
+            # (previously verify=False, which silently accepted MITM).
+            r = safe_get(
+                kwargs["url"],
+                params=kwargs.get("params", {}),
+                headers=kwargs.get("headers", {}),
+            )
+        except SafeURLError as e:
+            logging.warning("Rejected unsafe download URL for %s: %s", kwargs["service"], e)
+            return "error", {"error": "URL rejected by safety policy"}
         except requests.exceptions.RequestException as e:
             logging.error(e)
             return "error", {"error": f"Provided hash not found on {kwargs['service']}"}
@@ -1078,14 +1090,28 @@ def _download_file(route: str, url: str, options: str):
             key, value = option.split("=")
             headers[key.replace("dne_", "")] = value
 
+    url = url_defang(url)
     try:
-        url = url_defang(url)
-        response = requests.get(url, headers=headers, proxies=proxies)
+        if proxies:
+            # Through a proxy (tor or operator-configured socks5): local
+            # DNS doesn't apply, so we can't enforce the resolved-IP
+            # allowlist.  Scheme is still validated; tor onion URLs
+            # remain reachable because the proxy resolves them.
+            from urllib.parse import urlparse
+
+            scheme = urlparse(url).scheme
+            if scheme not in ("http", "https"):
+                raise SafeURLError(f"scheme not allowed via proxy: {scheme!r}")
+            response = requests.get(url, headers=headers, proxies=proxies, timeout=30)
+        else:
+            response = safe_get(url, headers=headers)
         if response and response.status_code == 200:
             return response.content
+    except SafeURLError as e:
+        log.warning("Rejected unsafe download URL: %s", e)
+        return False
     except Exception as e:
         log.error(e)
-        print(e)
 
     return response
 
