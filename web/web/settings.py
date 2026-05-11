@@ -270,6 +270,8 @@ INSTALLED_APPS = [
     "django_recaptcha",  # https://pypi.org/project/django-recaptcha/
     "rest_framework",
     "rest_framework.authtoken",
+    # OpenAPI schema generator + Swagger/ReDoc UI for /apiv2/.
+    "drf_spectacular",
 ]
 
 AUDIT_FRAMEWORK = web_cfg.audit_framework.get("enabled", False)
@@ -300,6 +302,9 @@ else:
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": _auth_classes,
     "DEFAULT_PERMISSION_CLASSES": _permission_classes,
+    # OpenAPI 3 schema generator -- introspects DRF views and produces
+    # /apiv2/schema/.  See SPECTACULAR_SETTINGS below.
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 if api_cfg.api.token_auth_enabled:
     REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = ["apiv2.throttling.SubscriptionRateThrottle"]
@@ -307,6 +312,28 @@ if api_cfg.api.token_auth_enabled:
         "user": api_cfg.api.default_user_ratelimit,
         "subscription": api_cfg.api.default_subscription_ratelimit,
     }
+
+# drf-spectacular configuration.  Keep terse: title/version go in the
+# UI header; auto-introspection produces the rest.
+SPECTACULAR_SETTINGS = {
+    "TITLE": "CAPE Sandbox API",
+    "DESCRIPTION": (
+        "REST API for the CAPE Sandbox malware analysis system. "
+        "Submit samples or URLs, query task status, fetch reports "
+        "and extracted artifacts.  See /apiv2/docs/ for Swagger UI "
+        "or /apiv2/redoc/ for ReDoc."
+    ),
+    "VERSION": "2.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,  # don't expose the schema view itself in the schema
+    "SCHEMA_PATH_PREFIX": r"/apiv2/",
+    "COMPONENT_SPLIT_REQUEST": True,
+    "SORT_OPERATIONS": False,
+    "SWAGGER_UI_SETTINGS": {
+        "deepLinking": True,
+        "persistAuthorization": True,
+        "displayOperationId": False,
+    },
+}
 
 TWOFA = web_cfg.web_auth.get("2fa", False)
 

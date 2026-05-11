@@ -59,6 +59,9 @@ dependencies = [
     # "qrcode==7.2",
     "python-tlsh==4.5.0",
     "djangorestframework==3.15.2",
+    # Auto-generates OpenAPI 3 schema from DRF views and serves
+    # Swagger/ReDoc.  See web/web/settings.py:SPECTACULAR_SETTINGS.
+    "drf-spectacular==0.27.2",
     "yara-python==4.5.1",
     "pymongo>=4.0.1",
     # "ImageHash==4.3.1",

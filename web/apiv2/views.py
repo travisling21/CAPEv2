@@ -23,6 +23,8 @@ from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_safe
 from rest_framework.decorators import api_view
+
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.response import Response
 
 sys.path.append(settings.CUCKOO_PATH)
@@ -267,6 +269,15 @@ def tasks_create_static(request):
     return Response(resp)
 
 
+@extend_schema(
+    tags=["Tasks"],
+    summary="Submit a file for analysis",
+    description=(
+        "Upload one or more files as multipart form data.  Each upload "
+        "becomes a queued analysis task.  Returns the task IDs and any "
+        "per-file errors."
+    ),
+)
 @csrf_exempt
 @api_view(["POST"])
 def tasks_create_file(request):
@@ -409,6 +420,14 @@ def tasks_create_file(request):
     return Response(resp)
 
 
+@extend_schema(
+    tags=["Tasks"],
+    summary="Submit a URL for analysis",
+    description=(
+        "Queue a task that drives the sandbox to navigate to the given "
+        "URL.  The URL is recorded but not pre-fetched on the host."
+    ),
+)
 @csrf_exempt
 @api_view(["POST"])
 def tasks_create_url(request):
@@ -510,6 +529,16 @@ def tasks_create_url(request):
     return Response(resp)
 
 
+@extend_schema(
+    tags=["Tasks"],
+    summary="Download a URL on the host and submit the result",
+    description=(
+        "The host fetches the URL (via the configured route -- direct, "
+        "tor, or socks5) and queues the downloaded content as a file "
+        "analysis task.  Outbound URLs are validated against the SSRF "
+        "guard before fetching."
+    ),
+)
 @csrf_exempt
 @api_view(["POST"])
 def tasks_create_dlnexec(request):
@@ -795,6 +824,20 @@ def ext_tasks_search(request):
 
 
 # Return Task ID's and data within a range of Task ID's
+@extend_schema(
+    tags=["Tasks"],
+    summary="List tasks",
+    description=(
+        "Paginated list of analysis tasks.  `window` filters to tasks "
+        "completed in the last N hours; combine with `limit` and `offset` "
+        "for pagination."
+    ),
+    parameters=[
+        OpenApiParameter("limit", int, OpenApiParameter.PATH, required=False, description="Page size"),
+        OpenApiParameter("offset", int, OpenApiParameter.PATH, required=False, description="Page offset"),
+        OpenApiParameter("window", int, OpenApiParameter.PATH, required=False, description="Hours back"),
+    ],
+)
 @csrf_exempt
 @api_view(["GET"])
 def tasks_list(request, offset=None, limit=None, window=None):
@@ -876,6 +919,11 @@ def tasks_list(request, offset=None, limit=None, window=None):
     return Response(resp)
 
 
+@extend_schema(
+    tags=["Tasks"],
+    summary="Inspect a single task",
+    description="Returns the full task row plus the associated sample/guest/machine context.",
+)
 @csrf_exempt
 @api_view(["GET"])
 def tasks_view(request, task_id):
@@ -1063,6 +1111,14 @@ def tasks_reprocess(request, task_id):
     return Response({"error": error, "data": f"Task ID {task_id} with status {task_status} marked for reprocessing"})
 
 
+@extend_schema(
+    tags=["Tasks"],
+    summary="Delete one or many tasks",
+    description=(
+        "`task_id` is a single id (e.g. 42), comma list (`1,2,3`) or range "
+        "(`1-10`).  Optional `status` filter only deletes matching tasks."
+    ),
+)
 @csrf_exempt
 @api_view(["GET"])
 def tasks_delete(request, task_id, status=False):
@@ -1115,6 +1171,11 @@ def tasks_delete(request, task_id, status=False):
     return Response(resp)
 
 
+@extend_schema(
+    tags=["Tasks"],
+    summary="Get task status",
+    description="Returns the task's current lifecycle status (pending/running/completed/failed_*).",
+)
 @csrf_exempt
 @api_view(["GET", "POST"])
 def tasks_status(request, task_id):
@@ -1148,6 +1209,22 @@ def tasks_status(request, task_id):
     return Response(resp)
 
 
+@extend_schema(
+    tags=["Reports"],
+    summary="Download a task's report",
+    description=(
+        "Return the analysis report in the requested format.  Supported "
+        "formats include json (default), html, lite, maec5, maec41, stix, "
+        "pdf.  Set make_zip=zip to receive a zipped bundle."
+    ),
+    parameters=[
+        OpenApiParameter("task_id", int, OpenApiParameter.PATH, required=True),
+        OpenApiParameter("report_format", str, OpenApiParameter.PATH, required=False,
+                         description="json | html | lite | maec5 | maec41 | stix | pdf"),
+        OpenApiParameter("make_zip", str, OpenApiParameter.PATH, required=False,
+                         description="Pass 'zip' to receive a compressed bundle"),
+    ],
+)
 @csrf_exempt
 @api_view(["GET"])
 def tasks_report(request, task_id, report_format="json", make_zip=False):

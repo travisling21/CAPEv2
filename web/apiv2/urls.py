@@ -4,12 +4,21 @@
 
 # from django.conf.urls import include
 from django.urls import path, re_path
+from drf_spectacular.views import (
+    SpectacularAPIView,
+    SpectacularRedocView,
+    SpectacularSwaggerView,
+)
 from rest_framework.authtoken.views import obtain_auth_token
 
 from apiv2 import views
 
 urlpatterns = [
     re_path(r"^$", views.index, name="apiv2"),
+    # OpenAPI 3 schema + interactive UIs.
+    path("schema/", SpectacularAPIView.as_view(), name="schema"),
+    path("docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
+    path("redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
     # disabled due to token auth
     # re_path(r'^api-auth/', include('rest_framework.urls', namespace='rest_framework')),
     path("api-token-auth/", obtain_auth_token, name="api_token_auth"),
