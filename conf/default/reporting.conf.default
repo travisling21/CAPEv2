@@ -190,9 +190,22 @@ mutexes = no
 # Community
 [callback]
 enabled = no
-# will send as post data {"task_id":X}
-# can be coma separated urls
+# Comma-separated webhook URLs.  Each receives one POST per completed
+# task.  Use HTTPS in production.
 url = http://IP/callback
+# payload = minimal: body is the legacy {"task_id": N} (backward compat).
+# payload = standard: rich self-contained event with target hash,
+#           signatures, detections, score, report_url, and an
+#           X-CAPE-Delivery uuid header for idempotency.
+payload = minimal
+# HMAC-SHA256 signing key.  When set, every request carries an
+# X-CAPE-Signature header containing "sha256=<hex(hmac(secret, body))>";
+# the receiver should verify before trusting the payload.
+secret =
+# Per-attempt HTTP timeout (seconds) and retry budget on network /
+# 5xx / 429 errors.  4xx responses (other than 429) are not retried.
+timeout = 10
+retries = 3
 
 [tmpfsclean]
 enabled = no
