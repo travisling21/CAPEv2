@@ -213,7 +213,6 @@ MIDDLEWARE = [
     # Cuckoo headers.
     "web.headers.CuckooHeaders",
     #'web.middleware.ExceptionMiddleware',
-    "django.contrib.auth.middleware.AuthenticationMiddleware",
     # 'django_otp.middleware.OTPMiddleware',
     # in case you want custom auth, place logic in web/web/middleware/custom_auth.py
     # "web.middleware.CustomAuth",

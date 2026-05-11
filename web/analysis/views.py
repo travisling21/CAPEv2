@@ -204,10 +204,24 @@ class conditional_login_required:
         return self.decorator(func)
 
 
+_PATH_SAFE_DISABLED_WARNED = False
+
+
 def _path_safe(path: str) -> bool:
     if web_cfg.security.check_path_safe:
         return path_safe(path)
 
+    # Opt-out is documented for mounted-folder setups, but every gate
+    # that depends on this function becomes a no-op when disabled.  Emit
+    # a one-shot warning so operators see what they've turned off.
+    global _PATH_SAFE_DISABLED_WARNED
+    if not _PATH_SAFE_DISABLED_WARNED:
+        import logging
+        logging.getLogger(__name__).warning(
+            "web.security.check_path_safe is disabled; path-traversal "
+            "gates are effectively no-ops. See web.conf [security]."
+        )
+        _PATH_SAFE_DISABLED_WARNED = True
     return True
 
 

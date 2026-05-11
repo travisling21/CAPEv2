@@ -25,3 +25,6 @@ installer/kvm-config.sh
 
 docs/book/src/_build
 /.vs
+
+# Stray top-level report dumps (see commit history of #2890)
+/report.html

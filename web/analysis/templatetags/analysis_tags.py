@@ -10,7 +10,7 @@ from collections import OrderedDict
 from uuid import NAMESPACE_DNS, uuid3
 
 from django.template.defaultfilters import register
-from django.utils.html import escape
+from django.utils.html import escape, format_html
 from django.utils.safestring import mark_safe
 
 
@@ -62,7 +62,16 @@ def get_item(dictionary, key):
     return dictionary.get(key, "")
 
 
-malware_name_url_pattern = """<a href="/analysis/search/detections:{malware_name}"><span style="font-weight: bold;">{malware_name}</span></a>"""
+def _malware_name_link(name):
+    # format_html escapes both interpolations -- safe for the href attribute
+    # (double-quoted) and for the text content.  The URL pattern itself
+    # restricts the path component to [\w\d\s:\-_\.]+, so any escaped value
+    # that contains other characters will simply 404 rather than expose XSS.
+    return format_html(
+        '<a href="/analysis/search/detections:{name}">'
+        '<span style="font-weight: bold;">{name}</span></a>',
+        name=name,
+    )
 
 
 @register.filter("get_detection_by_pid")
@@ -71,12 +80,9 @@ def get_detection_by_pid(dictionary, key):
         return
     detections = dictionary.get(str(key), "")
     if detections:
-        if len(detections) > 1:
-            output = " -> ".join([malware_name_url_pattern.format(malware_name=name) for name in detections])
-        else:
-            output = malware_name_url_pattern.format(malware_name=detections[0])
-
-        return mark_safe(output)
+        links = [_malware_name_link(name) for name in detections]
+        # format_html keeps each link safe; join with an escaped separator.
+        return mark_safe(" -> ".join(str(link) for link in links))
 
 
 @register.filter(name="dehex")
@@ -126,10 +132,10 @@ def flare_capa_capabilities(obj, *args, **kwargs):
     _print(3, "<tbody>\n")
     for namespaces, capabilities in obj.get("CAPABILITY", {}).items():
         _print(4, "<tr>\n")
-        _print(4, '<th width="25%" scope="row">' + namespaces + "</th>\n")
+        _print(4, '<th width="25%" scope="row">' + escape(namespaces) + "</th>\n")
         _print(4, "<td>\n")
         for capability in capabilities:
-            _print(5, "<li>" + capability + "</li>\n")
+            _print(5, "<li>" + escape(capability) + "</li>\n")
         _print(4, "</td>\n")
         _print(3, "</tr>\n")
     _print(2, "</tbody>\n")
@@ -157,10 +163,10 @@ def flare_capa_attck(obj, *args, **kwargs):
     _print(3, "<tbody>\n")
     for tactic, techniques in obj.get("ATTCK", {}).items():
         _print(4, "<tr>\n")
-        _print(4, '<th width="25%" scope="row">' + tactic + "</th>\n")
+        _print(4, '<th width="25%" scope="row">' + escape(tactic) + "</th>\n")
         _print(4, "<td>\n")
         for technique in techniques:
-            _print(5, "<li>" + technique + "</li>\n")
+            _print(5, "<li>" + escape(technique) + "</li>\n")
 
         _print(4, "</td>\n")
         _print(3, "</tr>\n")
@@ -189,10 +195,10 @@ def flare_capa_mbc(obj, *args, **kwargs):
     _print(3, "<tbody>\n")
     for objective, behaviors in obj.get("MBC", {}).items():
         _print(4, "<tr>\n")
-        _print(4, '<th width="25%" scope="row">' + objective + "</th>\n")
+        _print(4, '<th width="25%" scope="row">' + escape(objective) + "</th>\n")
         _print(4, "<td>\n")
         for behavior in behaviors:
-            _print(5, "<li>" + behavior + "</li>\n")
+            _print(5, "<li>" + escape(behavior) + "</li>\n")
 
         _print(4, "</td>\n")
         _print(3, "</tr>\n")
