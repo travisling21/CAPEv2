@@ -1120,8 +1120,11 @@ function dependencies() {
         sudo dpkg -i $de4dot_package_name
         sudo rm $de4dot_package_name
     else
-        echo "[-] de4dot package not found"
-        return
+        # `return` here would silently abort the rest of dependency
+        # install -- PostgreSQL, tor, sysctl/limits config, the works.
+        # de4dot is only used for .NET unpacking and is a recoverable
+        # miss; warn and continue.
+        echo "[-] de4dot .deb download failed; continuing without it. .NET unpacking may be degraded."
     fi
 
     # re2
@@ -1194,7 +1197,10 @@ EOF
         echo "root soft nofile 1048576" >> /etc/security/limits.conf
     fi
     if ! grep -q -E '^root hard nofile' /etc/security/limits.conf; then
-        echo "root soft hard 1048576" >> /etc/security/limits.conf
+        # Was "root soft hard 1048576" -- malformed line that
+        # pam_limits silently ignored, so root's hard nofile cap
+        # stayed at the system default (typically 4096).
+        echo "root hard nofile 1048576" >> /etc/security/limits.conf
     fi
 
 
@@ -1380,7 +1386,21 @@ function install_CAPE() {
         echo "[-] pyproject.toml not found in $CAPE_ROOT"
         return
     fi
-    sudo -u ${USER} bash -c "export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring; CRYPTOGRAPHY_DONT_BUILD_RUST=1 $PYTHON_MGR pip install -r pyproject.toml"
+    # Install the Python deps via whichever package manager the
+    # operator picked.  Both invocations are run inside $CAPE_ROOT
+    # (poetry needs cwd-or-`--directory`; uv needs cwd to find
+    # pyproject.toml).
+    #
+    # Previously this called `$PYTHON_MGR pip install -r pyproject.toml`
+    # which expands to `poetry pip install -r pyproject.toml` on the
+    # default install -- poetry has no `pip` subcommand, so the deps
+    # weren't installed and users hit ImportError on every service
+    # start until they manually ran `poetry install`.
+    if [ "$USE_UV" = "true" ] || [ "$USE_UV" = "True" ]; then
+        sudo -u ${USER} bash -c "cd $CAPE_ROOT && CRYPTOGRAPHY_DONT_BUILD_RUST=1 $PYTHON_MGR pip install -r pyproject.toml"
+    else
+        sudo -u ${USER} bash -c "cd $CAPE_ROOT && export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring; CRYPTOGRAPHY_DONT_BUILD_RUST=1 $PYTHON_MGR install --no-root"
+    fi
 
     if [ "$DISABLE_LIBVIRT" -eq 0 ]; then
         # Integrated libvirt install
@@ -1472,13 +1492,17 @@ function install_systemd() {
     fi
 
     systemctl daemon-reload
-    cape_web_enable_string=''
-    if [ "$MONGO_ENABLE" -ge 1 ]; then
-        cape_web_enable_string="cape-web"
+    # Build the unit list as an array so we never pass an empty string
+    # to systemctl when MONGO_ENABLE is off -- that produced
+    # "Failed to look up unit file state" on the previous run.
+    cape_units=(cape cape-rooter cape-processor)
+    if [ "${MONGO_ENABLE:-0}" -ge 1 ]; then
+        cape_units+=(cape-web)
     fi
+    cape_units+=(suricata)
 
-    systemctl enable cape cape-rooter cape-processor "$cape_web_enable_string" suricata
-    systemctl restart cape cape-rooter cape-processor "$cape_web_enable_string" suricata
+    systemctl enable "${cape_units[@]}"
+    systemctl restart "${cape_units[@]}"
 
     if [ ! -f "/etc/sudoers.d/cape" ] ; then
         cat > /etc/sudoers.d/cape << EOF
