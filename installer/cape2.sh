@@ -372,7 +372,12 @@ function install_nginx() {
         wget https://ftp.exim.org/pub/pcre/pcre2-"$PCRE_VERSION".tar.gz  && tar xzvf pcre2-"$PCRE_VERSION".tar.gz
     fi
 
-    if [ ! -d zlib-1.3.1]; then
+    # Was `[ ! -d zlib-1.3.1]` -- missing space before the `]`, which
+    # bash parses as `[ ! -d zlib-1.3.1]` (the `]` is part of the
+    # filename), the `[` command errors with "missing ]", the `if`
+    # short-circuits to false, and zlib is never downloaded.  The
+    # subsequent nginx ./configure --with-zlib=../zlib-... then fails.
+    if [ ! -d "zlib-$ZLIB_VERSION" ]; then
         wget https://www.zlib.net/zlib-"$ZLIB_VERSION".tar.gz && tar xzvf zlib-"$ZLIB_VERSION".tar.gz
     fi
 
@@ -727,7 +732,9 @@ function install_suricata() {
     fi
     if [ -d /usr/share/suricata/rules/ ]; then
         # copy files if rules folder contains files
-        if [ "$(ls -A /var/lib/suricata/rules/)" ]; then
+        # Was checking /var/lib/suricata/rules/ here, then copying from
+        # /usr/share/ -- a copy-paste error.  Check the actual source.
+        if [ "$(ls -A /usr/share/suricata/rules/)" ]; then
             cp "/usr/share/suricata/rules/"* "/etc/suricata/rules/"
         fi
     fi
@@ -762,7 +769,12 @@ outputs.1.eve-log.enabled: yes
 file-store.enabled: yes
 EOF
 
-    sed -i '$a include:\n  - cape.yaml\n' /etc/suricata/suricata.yaml
+    # Guard the include against re-runs.  YAML treats the second
+    # top-level `include:` block as a syntax error / duplicate-key,
+    # which broke `suricata -T` on re-runs of the installer.
+    if ! grep -qE '^[[:space:]]*-[[:space:]]*cape\.yaml[[:space:]]*$' /etc/suricata/suricata.yaml; then
+        sed -i '$a include:\n  - cape.yaml\n' /etc/suricata/suricata.yaml
+    fi
     usermod -aG pcap suricata
     usermod -aG suricata "${USER}"
     # sudo chmod -R g+w /var/log/suricata/
@@ -945,7 +957,7 @@ function install_mongo(){
 
         # sudo apt-get install -y ntp
         # systemctl start ntp.service && sudo systemctl enable ntp.service
-cat >> /lib/systemd/system/enable-transparent-huge-pages.service <<EOF
+cat > /lib/systemd/system/enable-transparent-huge-pages.service <<'EOF'
 # https://www.mongodb.com/docs/manual/administration/tcmalloc-performance/
 [Unit]
 Description=Enable Transparent Hugepages (THP)
@@ -965,14 +977,18 @@ EOF
         if [ -f /lib/systemd/system/mongod.service ]; then
             systemctl stop mongod.service
             systemctl disable mongod.service
-            rm /lib/systemd/system/mongod.service
-            rm /lib/systemd/system/mongod.service
+            rm -f /lib/systemd/system/mongod.service
             systemctl daemon-reload
         fi
 
         if [ ! -f /lib/systemd/system/mongodb.service ]; then
             crontab -l | { cat; echo "@reboot /bin/mkdir -p /data/configdb && /bin/mkdir -p /data/db && /bin/chown mongodb:mongodb /data -R"; } | crontab -
-            cat >> /lib/systemd/system/mongodb.service << EOF
+            # Quoted heredoc ('EOF') so $MAINPID lands in the unit file
+            # literally instead of being expanded to the empty string by
+            # the installer's shell.  Unquoted heredoc previously left
+            # systemd with `ExecReload=/bin/kill -HUP `, which errors on
+            # every `systemctl reload mongodb`.
+            cat > /lib/systemd/system/mongodb.service << 'EOF'
 [Unit]
 Description=High-performance, schema-free document-oriented database
 Wants=network.target

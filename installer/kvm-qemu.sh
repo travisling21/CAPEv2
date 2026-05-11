@@ -1289,7 +1289,10 @@ case "$COMMAND" in
     issues;;
 'all')
     configure_needreboot
-    aptitude install -f language-pack-UTF-8 python3-pip -y
+    # `language-pack-UTF-8` is not a real Debian package -- the intent
+    # was the English language pack so glibc-side locale-gen below has
+    # the data it needs.
+    aptitude install -f language-pack-en python3-pip -y
     install_qemu
     install_seabios
     install_kvm_linux
@@ -1342,7 +1345,10 @@ case "$COMMAND" in
         fi
         tar xf noip-duc-linux.tar.gz
         rm noip-duc-linux.tar.gz
-        cd "noip-*" || return
+        # Was `cd "noip-*"` -- quoted glob doesn't expand, so the cd
+        # tried (and failed) to enter a literal directory named
+        # `noip-*`.
+        cd noip-* || return
         make install
         crontab -l | { cat; echo "@reboot sleep 10 && /usr/local/bin/noip2 -c /usr/local/etc/no-ip2.conf"; } | crontab -
     fi

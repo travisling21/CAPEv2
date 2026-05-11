@@ -243,3 +243,198 @@ these fixes should check:
 
 A genuine end-to-end test would require a clean Ubuntu 22.04 or 24.04
 VM and is out of scope for this static review.
+
+---
+
+# Second-pass findings
+
+These came out of a deeper read of the rest of `cape2.sh` plus a
+spot-check of `kvm-qemu.sh`. Fixes are in the same commit unless
+flagged otherwise.
+
+## High: `install_mongo` ExecReload `$MAINPID` gets eaten by the installer's shell
+
+**`installer/cape2.sh:975-999` (pre-fix):**
+
+```bash
+cat >> /lib/systemd/system/mongodb.service << EOF
+...
+ExecReload=/bin/kill -HUP $MAINPID
+...
+EOF
+```
+
+The heredoc delimiter `EOF` is unquoted, so the installer's bash
+expands `$MAINPID` before writing the file. `$MAINPID` is unset in
+the installer process, so it expands to the empty string. The
+resulting unit file contains:
+
+```
+ExecReload=/bin/kill -HUP
+```
+
+`/bin/kill -HUP` with no PID errors out, so `systemctl reload
+mongodb` reports failure on every call. mongodb still works, but
+config reloads silently no-op.
+
+**Fix:** quote the heredoc delimiter `<<'EOF'` so the literal
+`$MAINPID` lands in the unit file for systemd to expand at runtime.
+Also flip the redirector from `>>` to `>` so re-runs of the
+installer don't duplicate the unit content (the `if [ ! -f ... ]`
+guard already protects against multiple runs, but `>` is safer if
+that guard is ever removed).
+
+Also dedupe the literal `rm /lib/systemd/system/mongod.service`
+appearing twice on lines 968-969; the second `rm` always failed.
+
+## High: `install_nginx` `[ ! -d zlib-1.3.1]` syntax error skips the zlib download
+
+**`installer/cape2.sh:375-377` (pre-fix):**
+
+```bash
+if [ ! -d zlib-1.3.1]; then
+    wget https://www.zlib.net/zlib-"$ZLIB_VERSION".tar.gz && tar xzvf zlib-"$ZLIB_VERSION".tar.gz
+fi
+```
+
+Missing space before the `]`. Bash parses the test as
+`[ ! -d zlib-1.3.1]`, where the closing `]` is consumed as part of
+the filename. The `[` command then errors with `[: missing ']'` and
+returns nonzero, so the `if` evaluates to false and the body never
+runs. The follow-up `./configure --with-zlib=../zlib-1.3.1`
+subsequently fails because the directory doesn't exist.
+
+**Fix:** add the missing space, use `"$ZLIB_VERSION"` for
+consistency.
+
+## Medium: `install_suricata` checks the wrong directory
+
+**`installer/cape2.sh:728-733` (pre-fix):**
+
+```bash
+if [ -d /usr/share/suricata/rules/ ]; then
+    if [ "$(ls -A /var/lib/suricata/rules/)" ]; then    # <-- wrong dir
+        cp "/usr/share/suricata/rules/"* "/etc/suricata/rules/"
+    fi
+fi
+```
+
+The outer guard checks `/usr/share/suricata/rules/`, the inner
+guard checks `/var/lib/suricata/rules/`, the copy reads from
+`/usr/share/`. On a fresh suricata install where
+`/var/lib/suricata/rules/` is empty, the rules in `/usr/share/`
+don't get copied even though they should. Result: suricata starts
+with an empty `/etc/suricata/rules/` and matches nothing.
+
+**Fix:** check the same dir we copy from.
+
+## Medium: `install_suricata` appends a duplicate `include:` block on every re-run
+
+**`installer/cape2.sh:765` (pre-fix):**
+
+```bash
+sed -i '$a include:\n  - cape.yaml\n' /etc/suricata/suricata.yaml
+```
+
+Unconditionally appends. Running `cape2.sh suricata` twice produces:
+
+```yaml
+include:
+  - cape.yaml
+
+include:
+  - cape.yaml
+```
+
+Suricata's YAML loader rejects this as a duplicate top-level key
+and `suricata -T -c suricata.yaml` exits 1. Subsequent
+`systemctl restart suricata` then fails.
+
+**Fix:** guard the `sed` with `grep -qE '...cape\.yaml...'` so the
+include is added at most once.
+
+## Medium: `kvm-qemu.sh` installs nonexistent `language-pack-UTF-8`
+
+**`installer/kvm-qemu.sh:1292` (pre-fix):**
+
+```bash
+aptitude install -f language-pack-UTF-8 python3-pip -y
+```
+
+There's no Debian package called `language-pack-UTF-8`. aptitude
+prints a "couldn't find package" warning and continues, so the
+install proceeds — but the English locale isn't installed, which
+matters for downstream tooling that assumes en_US.UTF-8.
+
+**Fix:** use the real package name `language-pack-en`.
+
+## Medium: `kvm-qemu.sh` no-ip cd glob is quoted
+
+**`installer/kvm-qemu.sh:1345` (pre-fix):**
+
+```bash
+cd "noip-*" || return
+```
+
+Double-quoted glob doesn't expand. Bash tries to `cd` into a
+literal directory named `noip-*`. The `cd` fails, `||` triggers
+`return`, and the rest of the noip block (`make install`, the
+crontab line) silently skips.
+
+**Fix:** unquote the glob: `cd noip-* || return`.
+
+## Lower-severity findings (documented, not fixed)
+
+- **`install_yara`** (`cape2.sh:849`): `if [ ! -f "$yara_version" ]`
+  uses the GitHub tag name (e.g. `v4.5.0`) as a literal filename
+  check in `/tmp`. Works on a clean install because wget happens to
+  save the zipball as `v4.5.0` (no extension), but it's fragile.
+  Re-running the function in a `/tmp` that already has `v4.5.0`
+  skips the re-download, which is fine, but then the directory
+  detection at line 854 (`ls | grep "VirusTotal-yara-*"`) depends
+  on the previous extraction having succeeded.
+
+- **`install_yara`** (`cape2.sh:843`): apt-installs `libyara-dev`
+  (system yara) and *then* builds yara from source and dpkg-deb
+  installs that. You end up with two yara installations. The dpkg-deb
+  install probably wins (newer version) but the apt one isn't removed.
+
+- **`install_nginx`** (`cape2.sh:364`): `gpg --verify` is called
+  before the nginx signing key is imported into the keyring, so the
+  verify always fails. There's no error handling, so install
+  continues. The signature check is effectively decorative.
+
+- **`install_nginx`** (`cape2.sh:362,372,376,380`): tarball
+  downloads over HTTP. Each upstream supports HTTPS; using it gives
+  TLS-level integrity for free even when GPG verification is broken.
+
+- **`install_mongo`** (`cape2.sh:937`): writes to
+  `/etc/apt/keyrings/mongo.gpg` without `mkdir -p
+  /etc/apt/keyrings/` first. On older Ubuntu (20.04) where the
+  directory doesn't exist by default, the `gpg --dearmor -o ...`
+  call fails and the subsequent apt-get update can't find the
+  signing key for the mongo repo, leading to an unauthenticated
+  package warning or refusal to install mongo.
+
+- **`install_suricata`** (`cape2.sh:766-767`): `usermod -aG pcap
+  suricata` and `usermod -aG suricata "${USER}"` run unconditionally.
+  Both fail loudly if `apt-get install suricata` failed earlier (no
+  `suricata` user/group), but the function continues, leaving the
+  CAPE user without pcap permissions. Worth guarding with `id -u
+  suricata >/dev/null 2>&1 || return`.
+
+- **`kvm-qemu.sh:1341`** noip-duc download uses HTTP.
+
+## Updated post-install checklist
+
+In addition to the checks from the first pass:
+
+4. `sudo -u cape /etc/poetry/bin/poetry --directory /opt/CAPEv2 run python -c 'import yara; yara.compile(source="rule x { condition: true }")'` succeeds (verifies the source-built yara is the one in the venv).
+
+5. `sudo -u suricata suricata -T -c /etc/suricata/suricata.yaml` exits 0 (catches the duplicate-include bug if any).
+
+6. `systemctl reload mongodb` exits 0 (catches the `$MAINPID` heredoc bug).
+
+7. After running with `MONGO_ENABLE=0`, `systemctl is-enabled cape cape-rooter cape-processor suricata` all return `enabled` (catches the empty-unit-name bug regression).
+
+8. `ls -A /etc/suricata/rules/ | wc -l` returns a non-zero count after install (catches the wrong-dir-check bug).
