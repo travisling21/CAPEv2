@@ -331,8 +331,15 @@ class RunProcessing:
 
         return None
 
-    def run(self):
+    def run(self, name: str = ""):
         """Run all processing modules and all signatures.
+
+        @param name: optional module name; when set, only the matching
+            processing module runs.  Useful for utils/replay.py when
+            iterating on a single processing module against a cached
+            analysis.  Note that processing modules can depend on each
+            other's keys in `self.results` -- filtering down to one is
+            sometimes lossy.
         @return: processing results.
         """
 
@@ -346,6 +353,12 @@ class RunProcessing:
         # If no modules are loaded, return an empty dictionary.
         if processing_list:
             processing_list.sort(key=lambda module: module.order)
+
+            if name:
+                lowered = name.lower()
+                processing_list = [m for m in processing_list if m.__name__.lower() == lowered]
+                if not processing_list:
+                    log.warning("No processing module matched name=%r", name)
 
             # Run every loaded processing module.
             for module in processing_list:
@@ -885,9 +898,13 @@ class RunReporting:
             log.exception('Failed to run the reporting module "%s": %s', current.__class__.__name__, e)
             self.reporting_errors += 1
 
-    def run(self):
+    def run(self, name: str = ""):
         """Generates all reports.
 
+        @param name: optional module name; when set, only the matching
+            reporting module runs.  Used by utils/replay.py to
+            regenerate a single report (e.g. just stix or just html)
+            against a cached analysis without re-running processing.
         @return a count of the reporting module errors.
         """
         # In every reporting module you can specify a numeric value that
@@ -900,6 +917,14 @@ class RunReporting:
         # Return if no reporting modules are loaded.
         if reporting_list:
             reporting_list.sort(key=lambda module: module.order)
+
+            if name:
+                # Match the class name case-insensitively so callers can
+                # say "stix" or "JsonDump" interchangeably.
+                lowered = name.lower()
+                reporting_list = [m for m in reporting_list if m.__name__.lower() == lowered]
+                if not reporting_list:
+                    log.warning("No reporting module matched name=%r", name)
 
             # Run every loaded reporting module.
             for module in reporting_list:
