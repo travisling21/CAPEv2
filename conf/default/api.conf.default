@@ -14,6 +14,15 @@ url = http://example.tld
 token_auth_enabled = no
 mcp = no
 
+# When `no` (default), every API endpoint requires either a session
+# cookie or, if token_auth_enabled = yes, a token.  When `yes`, the API
+# is fully anonymous -- task submission, URL fetching, file downloads
+# all open to any client that can reach the port.  Use ONLY on trusted
+# (host-only / loopback / VPN) networks; the CAPE host runs untrusted
+# samples and must not be reachable from the public Internet with
+# anonymous_api = yes.
+anonymous_api = no
+
 [list_exitnodes]
 enabled = no
 mcp = no

@@ -274,24 +274,38 @@ INSTALLED_APPS = [
 
 AUDIT_FRAMEWORK = web_cfg.audit_framework.get("enabled", False)
 
+# API authentication.  Session auth is always available so logged-in
+# users hit the API with their normal cookie.  Token auth is added when
+# api.conf [api] token_auth_enabled = yes.
+#
+# The default permission class is IsAuthenticated.  To preserve the old
+# anonymous-API behavior, set api.conf [api] anonymous_api = yes; this
+# logs a loud warning at startup so it's not a silent footgun.
+_auth_classes = ["rest_framework.authentication.SessionAuthentication"]
 if api_cfg.api.token_auth_enabled:
-    REST_FRAMEWORK = {
-        "DEFAULT_AUTHENTICATION_CLASSES": [
-            "rest_framework.authentication.TokenAuthentication",
-            "rest_framework.authentication.SessionAuthentication",
-        ],
-        "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
-        "DEFAULT_THROTTLE_CLASSES": ["apiv2.throttling.SubscriptionRateThrottle"],
-        "DEFAULT_THROTTLE_RATES": {
-            "user": api_cfg.api.default_user_ratelimit,
-            "subscription": api_cfg.api.default_subscription_ratelimit,
-        },
-    }
+    _auth_classes.insert(0, "rest_framework.authentication.TokenAuthentication")
 
+if api_cfg.api.get("anonymous_api", False):
+    import logging as _logging
+
+    _logging.getLogger("django").warning(
+        "api.conf [api] anonymous_api=yes -- REST API is unauthenticated. "
+        "Anyone reachable can submit tasks, fetch URLs, and download "
+        "samples.  Use only on trusted networks."
+    )
+    _permission_classes = ["rest_framework.permissions.AllowAny"]
 else:
-    REST_FRAMEWORK = {
-        "DEFAULT_AUTHENTICATION_CLASSES": [],
-        "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"],
+    _permission_classes = ["rest_framework.permissions.IsAuthenticated"]
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": _auth_classes,
+    "DEFAULT_PERMISSION_CLASSES": _permission_classes,
+}
+if api_cfg.api.token_auth_enabled:
+    REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = ["apiv2.throttling.SubscriptionRateThrottle"]
+    REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {
+        "user": api_cfg.api.default_user_ratelimit,
+        "subscription": api_cfg.api.default_subscription_ratelimit,
     }
 
 TWOFA = web_cfg.web_auth.get("2fa", False)
