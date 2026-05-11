@@ -23,6 +23,12 @@ from lib.cuckoo.common.config import Config
 from lib.cuckoo.common.path_utils import path_exists
 from lib.cuckoo.common.utils import create_folder
 
+from .alembic_helpers import (
+    current_db_revision,
+    get_head_revision,
+    stamp_to_head,
+    upgrade_to_head,
+)
 from .data.db_common import Base
 from .data.guac_session import GuacSession  # noqa: F401 - must be imported before create_all()
 from .data.tasking import TasksMixIn
@@ -49,7 +55,13 @@ except ImportError:  # pragma: no cover
 
 
 
-SCHEMA_VERSION = "2b3c4d5e6f7g"
+# Read the schema version from the actual Alembic migrations tree
+# instead of hardcoding it.  Adding a new migration script no longer
+# requires editing this file.  Lazy: only resolved on first call so
+# `import database` stays cheap in tests that pin a different tree.
+def _schema_version() -> str:
+    return get_head_revision()
+
 
 log = logging.getLogger(__name__)
 conf = Config("cuckoo")
@@ -138,29 +150,55 @@ class _Database(TasksMixIn,
             session.execute(delete_stmt)
         """
 
-        # Deal with schema versioning.
-        # TODO: it's a little bit dirty, needs refactoring.
-        with self.session() as tmp_session:
-            # Use the modern select() and scalar() to fetch the first object
-            query = select(AlembicVersion)
-            last = tmp_session.scalar(query)
+        # Schema versioning: read the head revision from the Alembic
+        # migrations tree at runtime, then reconcile with what's in
+        # the `alembic_version` table.
+        if schema_check:
+            try:
+                self._reconcile_schema_version()
+            except CuckooDatabaseError:
+                raise
+            except Exception as e:  # pragma: no cover
+                # Migrations are critical; refuse to start on any
+                # unexpected error rather than silently running on
+                # a half-known schema.
+                raise CuckooDatabaseError(f"Schema version reconciliation failed: {e}")
 
-            if last is None:
-                # Set database schema version (this part is unchanged)
-                tmp_session.add(AlembicVersion(version_num=SCHEMA_VERSION))
-                try:
-                    tmp_session.commit()
-                except SQLAlchemyError as e:  # pragma: no cover
-                    tmp_session.rollback()
-                    raise CuckooDatabaseError(f"Unable to set schema version: {e}")
-            else:
-                # Check if db version is the expected one (this part is unchanged)
-                if last.version_num != SCHEMA_VERSION and schema_check:  # pragma: no cover
-                    print(
-                        f"DB schema version mismatch: found {last.version_num}, expected {SCHEMA_VERSION}. Try to apply all migrations"
-                    )
-                    print(red("Please backup your data before migration!\ncd utils/db_migration/ && poetry run alembic upgrade head"))
-                    sys.exit()
+    def _reconcile_schema_version(self) -> None:
+        head = _schema_version()
+        current = current_db_revision(self.engine)
+
+        if current is None:
+            # Fresh DB.  metadata.create_all() above produced the
+            # schema; tell Alembic the DB is at head so future
+            # `alembic upgrade head` runs no-op instead of trying to
+            # re-apply every migration against a populated schema.
+            stamp_to_head(self.engine)
+            log.info("Stamped fresh database at Alembic revision %s", head)
+            return
+
+        if current == head:
+            return
+
+        auto = bool(self.cfg.database.get("auto_migrate", False))
+        if auto:
+            log.warning(
+                "DB schema at revision %s, head is %s; running `alembic upgrade head` "
+                "because database.auto_migrate is enabled",
+                current, head,
+            )
+            upgrade_to_head(self.engine)
+            log.info("Schema upgraded to %s", head)
+            return
+
+        msg = (
+            f"DB schema version mismatch: DB is at {current}, head is {head}.\n"
+            "Back up your data, then run:\n"
+            "    cd utils/db_migration/ && poetry run alembic upgrade head\n"
+            "or set database.auto_migrate = yes in cuckoo.conf to upgrade automatically."
+        )
+        print(red(msg))
+        sys.exit(1)
 
     def __del__(self):
         """Disconnects pool."""

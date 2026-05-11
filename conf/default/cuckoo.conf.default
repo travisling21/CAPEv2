@@ -197,6 +197,14 @@ timeout =
 # Log all SQL statements issued to the database.
 log_statements = off
 
+# When the DB's schema revision doesn't match the Alembic head:
+#   no  -- print the upgrade instructions and refuse to start (default,
+#          safest because schema changes can be destructive).
+#   yes -- run `alembic upgrade head` automatically at startup.  Only
+#          enable this if you maintain reliable DB backups; some
+#          migrations alter column types and cannot be rolled back.
+auto_migrate = no
+
 [timeouts]
 # Set the default analysis timeout expressed in seconds. This value will be
 # used to define after how many seconds the analysis will terminate unless
