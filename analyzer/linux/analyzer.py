@@ -21,10 +21,12 @@ from urllib.request import urlopen
 
 from lib.api.process import Process
 from lib.common.abstracts import Auxiliary
-from lib.common.constants import PATHS
+from lib.common.constants import PATHS, ROOT
 from lib.common.exceptions import CuckooError, CuckooPackageError
+from lib.common.hashing import sha256_file
 from lib.common.results import upload_to_host
 from lib.core.config import Config
+from lib.core.dropped import sweep_and_upload
 from lib.core.packages import choose_package_class
 from lib.core.startup import create_folders, init_logging
 from modules import auxiliary
@@ -32,12 +34,22 @@ from modules import auxiliary
 log = logging.getLogger()
 
 PID = os.getpid()
+# Paths the running packages noticed and want uploaded even if the
+# end-of-analysis sweep wouldn't otherwise catch them (e.g. a file in
+# a directory outside DEFAULT_ROOTS).  Population is best-effort.
 FILES_LIST = set()
+# sha256 of every file the host already has via this analyzer process,
+# whether shipped by FileCollector live or by the end-of-analysis
+# sweep.  Lets sweep_and_upload skip duplicates.
+UPLOADED_HASHES = set()
 DUMPED_LIST = set()
 PROCESS_LIST = set()
 SEEN_LIST = set()
 PPID = Process(pid=PID).get_parent_pid()
 MEM_PATH = PATHS.get("memory")
+# Set in Analyzer.prepare(); used by dump_files() to scope the sweep
+# to files created/modified after analysis began.
+ANALYSIS_START_TS: float = 0.0
 
 
 def add_pids(pids):
@@ -54,9 +66,32 @@ def add_pids(pids):
 
 
 def dump_files():
-    """Dump all the dropped files."""
-    for file_path in FILES_LIST:
-        log.info("PLS IMPLEMENT DUMP, want to dump %s", file_path)
+    """End-of-analysis sweep for dropped files.
+
+    The pyinotify-based FileCollector auxiliary is the primary path
+    and pushes files live during execution.  This sweep is the
+    fallback: it catches files that landed between FileCollector.stop()
+    and now, files in directories not under FileCollector's recursion,
+    and -- when pyinotify isn't installed -- everything.
+
+    Always also ships the TLS keylog so HTTPS decryption keeps
+    working.
+    """
+    try:
+        uploaded = sweep_and_upload(
+            since_mtime=ANALYSIS_START_TS,
+            uploader=upload_to_host,
+            hasher=sha256_file,
+            already_uploaded=UPLOADED_HASHES,
+            exclude_prefixes=(ROOT, "/proc", "/sys", "/dev/pts", "/dev/mqueue", "/run"),
+            extra_paths=FILES_LIST,
+        )
+        UPLOADED_HASHES.update(uploaded)
+        if uploaded:
+            log.info("End-of-analysis sweep uploaded %d new file(s)", len(uploaded))
+    except Exception:
+        log.exception("End-of-analysis sweep failed")
+
     upload_to_host(
         os.environ.get("SSLKEYLOGFILE", "/sslkeylog.log"),
         "tlsdump/tlsdump.log",
@@ -148,6 +183,13 @@ class Analyzer:
 
     def prepare(self):
         """Prepare env for analysis."""
+
+        # Stamp now so dump_files() only sweeps files created during
+        # this run.  Done before create_folders() so analyzer-owned
+        # files under ROOT all have mtime >= this stamp and get
+        # excluded by the path filter (not by timestamp).
+        global ANALYSIS_START_TS
+        ANALYSIS_START_TS = time.time()
 
         # Create the folders used for storing the results.
         create_folders()
