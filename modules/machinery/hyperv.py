@@ -44,9 +44,21 @@ class HyperV(Machinery):
         log.info("Hyper-V machinery module initialised (%s).", self.host)
 
     def run_cmd(self, cmd):
-        r = subprocess.Popen("ssh -i {key} {user}@{host} '{cmd}'".format(key=self.ssh_key, user=self.username, host=self.host, cmd="powershell.exe " + cmd),
-            shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
-        return(r[0].decode().strip())
+        # Pass argv directly so that ssh sees a single remote-command
+        # argument and we never invoke the local shell.  The remote
+        # powershell command is still a string interpolation, but the
+        # inputs (VM labels from the DB, fixed templates above) are
+        # operator-controlled.
+        argv = [
+            "ssh",
+            "-i", self.ssh_key,
+            f"{self.username}@{self.host}",
+            "powershell.exe " + cmd,
+        ]
+        r = subprocess.Popen(
+            argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        ).communicate()
+        return r[0].decode().strip()
 
     def power_off(self, id):
         self.run_cmd(stop_vm.format(vm=id))

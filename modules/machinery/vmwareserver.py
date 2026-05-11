@@ -41,6 +41,26 @@ class VMwareServer(Machinery):
         if not path_exists(vmx_path):
             raise CuckooMachineError(f"Vm file {vmx_path} not found")
 
+    def _vmrun_argv(self, *subcommand):
+        """Build a vmrun argv list for the configured ws-shared host.
+
+        Passing argv (not a shell string) means VMware passwords containing
+        shell metacharacters survive intact and there is no command-injection
+        surface from operator-supplied config values.
+        """
+        return [
+            self.options.vmwareserver.path,
+            "-T",
+            "ws-shared",
+            "-h",
+            self.options.vmwareserver.vmware_url,
+            "-u",
+            self.options.vmwareserver.username,
+            "-p",
+            self.options.vmwareserver.password,
+            *subcommand,
+        ]
+
     def _check_snapshot(self, vmx_path, snapshot):
         """Checks snapshot existance.
         @param vmx_path: path to vmx file
@@ -48,13 +68,10 @@ class VMwareServer(Machinery):
         @raise CuckooMachineError: if snapshot not found
         """
 
-        check_string = (
-            f"{self.options.vmwareserver.path} -T ws-shared -h {self.options.vmwareserver.vmware_url} -u {self.options.vmwareserver.username} "
-            f'-p {self.options.vmwareserver.password} listSnapshots "{vmx_path}"'
-        )
+        argv = self._vmrun_argv("listSnapshots", vmx_path)
 
         try:
-            p = subprocess.Popen(check_string, universal_newlines=True, shell=True)
+            p = subprocess.Popen(argv, universal_newlines=True, stdout=subprocess.PIPE)
             output, _ = p.communicate()
         except OSError as e:
             raise CuckooMachineError(f"Unable to get snapshot list for {vmx_path}: {e}")
@@ -82,15 +99,14 @@ class VMwareServer(Machinery):
 
         time.sleep(3)
 
-        start_string = (
-            f"{self.options.vmwareserver.path} -T ws-shared -h {self.options.vmwareserver.vmware_url} -u {self.options.vmwareserver.username} "
-            f'-p {self.options.vmwareserver.password} start "{vmx_path}"'
-        )
-
         log.debug("Starting vm %s", vmx_path)
 
         try:
-            p = subprocess.Popen(start_string, universal_newlines=True, shell=True)
+            p = subprocess.Popen(
+                self._vmrun_argv("start", vmx_path),
+                universal_newlines=True,
+                stdout=subprocess.PIPE,
+            )
             if self.options.vmwareserver.mode.lower() == "gui":
                 output, _ = p.communicate()
                 if output:
@@ -105,17 +121,14 @@ class VMwareServer(Machinery):
         @raise CuckooMachineError: if unable to stop.
         """
 
-        stop_string = (
-            f"{self.options.vmwareserver.path} -T ws-shared -h {self.options.vmwareserver.vmware_url} -u {self.options.vmwareserver.username} "
-            f'-p {self.options.vmwareserver.password} stop "{vmx_path}" hard'
-        )
-
         log.debug("Stopping vm %s", vmx_path)
-        # log.debug("Stop string: %s", stop_string)
 
         if self._is_running(vmx_path):
             try:
-                if subprocess.call(stop_string, universal_newlines=True, shell=True):
+                if subprocess.call(
+                    self._vmrun_argv("stop", vmx_path, "hard"),
+                    universal_newlines=True,
+                ):
                     raise CuckooMachineError(f"Error shutting down machine {vmx_path}")
             except OSError as e:
                 raise CuckooMachineError(f"Error shutting down machine {vmx_path}: {e}")
@@ -130,14 +143,16 @@ class VMwareServer(Machinery):
         """
         log.debug("Revert snapshot for vm %s: %s", vmx_path, snapshot)
 
-        revert_string = (
-            f"{self.options.vmwareserver.path} -T ws-shared -h {self.options.vmwareserver.vmware_url} -u {self.options.vmwareserver.username} "
-            f'-p {self.options.vmwareserver.password} revertToSnapshot "{vmx_path}" snapshot'
-        )
-        # log.debug("Revert string: %s", revert_string)
-
+        # NOTE: the previous shell-string version interpolated the literal
+        # word "snapshot" instead of the function's `snapshot` argument
+        # (`revertToSnapshot "{vmx_path}" snapshot`), so this code path
+        # always tried to revert to a snapshot literally named "snapshot".
+        # Pass the actual name now that we're argv-safe.
         try:
-            if subprocess.call(revert_string, universal_newlines=True, shell=True):
+            if subprocess.call(
+                self._vmrun_argv("revertToSnapshot", vmx_path, snapshot),
+                universal_newlines=True,
+            ):
                 raise CuckooMachineError(f"Unable to revert snapshot for machine {vmx_path}: vmrun exited with error")
 
         except OSError as e:
@@ -148,14 +163,12 @@ class VMwareServer(Machinery):
         @param vmx_path: path to vmx file
         @return: running status
         """
-        list_string = (
-            f"{self.options.vmwareserver.path} -T ws-shared -h {self.options.vmwareserver.vmware_url} -u {self.options.vmwareserver.username} "
-            f'-p {self.options.vmwareserver.password} list "{vmx_path}"'
-        )
-        # log.debug("List string: %s", list_string)
-
         try:
-            p = subprocess.Popen(list_string, universal_newlines=True, stdout=subprocess.PIPE, shell=True)
+            p = subprocess.Popen(
+                self._vmrun_argv("list", vmx_path),
+                universal_newlines=True,
+                stdout=subprocess.PIPE,
+            )
             output, error = p.communicate()
         except OSError as e:
             raise CuckooMachineError(f"Unable to check running status for {vmx_path}: {e}")
